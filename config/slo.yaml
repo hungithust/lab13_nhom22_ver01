@@ -1,16 +1,96 @@
+
+# Cách đọc file này:
+#   objective: ngưỡng kỹ thuật (ví dụ p95 < 3000ms)
+#   target:    % thời gian hệ thống phải đạt objective đó
+#   error_budget_minutes: số phút vi phạm cho phép trong 28 ngày
+#
+# Công thức error budget:
+#   28 ngày = 40320 phút
+#   target 99.5% → budget = 40320 × 0.005 = 201 phút (3h21p)
+#   target 99.0% → budget = 40320 × 0.010 = 403 phút (6h43p)
+# ============================================================
+
 service: day13-observability-lab
 window: 28d
+
 slis:
+
+  # ----------------------------------------------------------
+  # SLI 1: Latency P95
+  # ----------------------------------------------------------
+  # Tại sao P95 chứ không phải average?
+  # → Average bị kéo bởi majority fast requests, che giấu tail latency.
+  # → P95: cứ 100 request, 95 cái phải dưới ngưỡng này.
+  #
+  # Tại sao 3000ms?
+  # → Nielsen research: user mất tập trung ở ~3 giây.
+  # → RAG (150ms) + LLM (150ms) + overhead ≈ 400ms bình thường.
+  # → 3000ms = có đủ buffer cho retries, cold start, spike nhỏ.
   latency_p95_ms:
     objective: 3000
     target: 99.5
-    note: Replace with your group's target
+    error_budget_minutes: 201
+    note: >
+      Inject rag_slow → P95 tăng lên ~2650ms (gần ngưỡng).
+      Alert threshold đặt ở 5000ms (cao hơn objective) để tránh alert storm.
+    burn_rate_fast: 14.4   # tiêu hết budget trong < 2 ngày → alert P2
+    burn_rate_slow: 6.0    # tiêu hết budget trong < 5 ngày → alert P3
+
+  # ----------------------------------------------------------
+  # SLI 2: Error Rate
+  # ----------------------------------------------------------
+  # Tại sao 2% thay vì 0%?
+  # → 0% error không thực tế: network flake, timeout transient đều xảy ra.
+  # → 2% = 1 trong 50 request lỗi → user có thể retry được.
+  # → Trên 2% liên tục = vấn đề hệ thống (tool_fail, code bug).
   error_rate_pct:
     objective: 2
     target: 99.0
+    error_budget_minutes: 403
+    note: >
+      Tính từ ERRORS counter trong metrics.py.
+      Inject tool_fail → error_rate = 100% ngay lập tức.
+    burn_rate_fast: 14.4
+    burn_rate_slow: 6.0
+
+  # ----------------------------------------------------------
+  # SLI 3: Daily Cost Budget
+  # ----------------------------------------------------------
+  # Tại sao đây là SLI (không chỉ là alert)?
+  # → Cost là SLA với FinOps/ban lãnh đạo, cần tracking formal.
+  # → Vượt budget = ảnh hưởng P&L, không chỉ là vấn đề ops.
+  #
+  # Tính $2.50/ngày:
+  #   ~500 req/ngày × 100 tokens_in × $3/1M  = $0.15 input
+  #   ~500 req/ngày × 130 tokens_out × $15/1M = $0.975 output
+  #   Total ≈ $1.13/ngày bình thường → $2.50 = 2× safety buffer
   daily_cost_usd:
-    objective: 2.5
+    objective: 2.50
     target: 100.0
+    error_budget_minutes: 0
+    note: >
+      Hard limit — không có error budget. Vượt $2.50/ngày = vi phạm.
+      cost_spike incident: tokens_out × 4 → cost tăng ~3.5×.
+      10 request test: ~$0.023 bình thường, ~$0.081 khi cost_spike.
+
+  # ----------------------------------------------------------
+  # SLI 4: Quality Score Average
+  # ----------------------------------------------------------
+  # Heuristic trong _heuristic_quality() (agent.py):
+  #   +0.5 base luôn có
+  #   +0.2 nếu RAG trả về docs
+  #   +0.1 nếu answer dài > 40 chars
+  #   +0.1 nếu keyword của câu hỏi xuất hiện trong answer
+  #   -0.2 nếu answer có "[REDACTED" (PII bị scrub ra answer)
+  #
+  # 0.75 = base + docs + answer dài = trạng thái bình thường tốt.
+  # Target 95% (looser hơn các SLI khác) vì quality là heuristic, không exact.
   quality_score_avg:
     objective: 0.75
     target: 95.0
+    error_budget_minutes: 2016
+    note: >
+      Baseline với sample_queries.jsonl: ~0.80 bình thường.
+      Score thấp thường do corpus miss (query không có refund/monitoring/policy).
+    burn_rate_fast: 14.4
+    burn_rate_slow: 6.0

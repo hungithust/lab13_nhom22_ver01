@@ -34,6 +34,10 @@ async def startup() -> None:
         payload={"tracing_enabled": tracing_enabled()},
     )
 
+@app.get("/")
+async def root() -> dict:
+    return {"message": "Welcome to Day 13 Observability Lab"}
+
 
 @app.get("/health")
 async def health() -> dict:

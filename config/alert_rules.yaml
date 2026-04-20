@@ -1,19 +1,127 @@
+
+# Triết lý alert:
+#   1. Symptom-based: alert khi USER bị ảnh hưởng, không phải khi CPU cao.
+#   2. Mỗi alert phải có runbook — alert không có hành động = noise.
+#   3. Severity phản ánh tốc độ xử lý:
+#      P1 = xử lý ngay (< 15 phút)
+#      P2 = xử lý trong ca (< 2 giờ)
+#      P3 = triage trong ngày
+# ============================================================
+
 alerts:
-  - name: high_latency_p95
-    severity: P2
-    condition: latency_p95_ms > 5000 for 30m
-    type: symptom-based
-    owner: team-oncall
-    runbook: docs/alerts.md#1-high-latency-p95
+
+  # ──────────────────────────────────────────────────────────
+  # P1-A: Error rate spike
+  # ──────────────────────────────────────────────────────────
+  # Tại sao P1 và window 5m?
+  # → Error = user nhận 500, không có answer → immediate impact.
+  # → 5m đủ loại spike nhất thời nhưng đủ ngắn để catch tool_fail nhanh.
+  # → Window 30m sẽ để tool_fail ảnh hưởng 150+ request trước khi alert.
   - name: high_error_rate
     severity: P1
     condition: error_rate_pct > 5 for 5m
     type: symptom-based
     owner: team-oncall
     runbook: docs/alerts.md#2-high-error-rate
+    correlates_with:
+      - incident: tool_fail
+      - log_field: error_type
+    test_command: python scripts/inject_incident.py --scenario tool_fail
+
+  # ──────────────────────────────────────────────────────────
+  # P1-B: No traffic — Dead man's switch
+  # ──────────────────────────────────────────────────────────
+  # error_rate KHÔNG phát hiện được app crash hoàn toàn:
+  # không có request vào → không có error → hệ thống trông "healthy".
+  # "Absence of signal" là failure mode khó nhất.
+  - name: no_traffic
+    severity: P1
+    condition: request_count == 0 for 10m
+    type: absence-based
+    owner: team-oncall
+    runbook: docs/alerts.md#5-no-traffic
+    false_positive_note: >
+      Disable trong maintenance window.
+      Trigger bình thường trong dev nếu chưa chạy load_test.py.
+
+  # ──────────────────────────────────────────────────────────
+  # P2-A: Tail latency breach
+  # ──────────────────────────────────────────────────────────
+  # Tại sao threshold 5000ms trong khi SLO objective là 3000ms?
+  # → Alert threshold > SLO objective để tránh alert storm.
+  # → 3000ms = user bắt đầu khó chịu (SLO).
+  # → 5000ms = cần hành động ngay (alert).
+  # → Gap cho phép team triage trước khi SLO breach hoàn toàn.
+  #
+  # Window 30m: P95 cần đủ sample (~1800 req) để ổn định.
+  - name: high_latency_p95
+    severity: P2
+    condition: latency_p95_ms > 5000 for 30m
+    type: symptom-based
+    owner: team-oncall
+    runbook: docs/alerts.md#1-high-latency-p95
+    correlates_with:
+      - incident: rag_slow
+      - metric: latency_p99
+    slo_reference: latency_p95_ms
+    test_command: python scripts/inject_incident.py --scenario rag_slow
+
+  # ──────────────────────────────────────────────────────────
+  # P2-B: Cost budget spike
+  # ──────────────────────────────────────────────────────────
+  # Tại sao "2x baseline" thay vì ngưỡng tuyệt đối?
+  # → Ngưỡng tuyệt đối không scale: traffic × 2 → cost × 2 → false alert.
+  # → 2x baseline tự điều chỉnh: chỉ alert khi cost/request tăng đột biến.
+  # → cost_spike incident: tokens_out × 4 → cost/request tăng ~4x → trigger.
   - name: cost_budget_spike
     severity: P2
     condition: hourly_cost_usd > 2x_baseline for 15m
     type: symptom-based
     owner: finops-owner
     runbook: docs/alerts.md#3-cost-budget-spike
+    correlates_with:
+      - incident: cost_spike
+      - metric: tokens_out_total
+    slo_reference: daily_cost_usd
+    test_command: python scripts/inject_incident.py --scenario cost_spike
+
+  # ──────────────────────────────────────────────────────────
+  # P2-C: SLO Error Budget Burn Rate (Advanced / Bonus)
+  # ──────────────────────────────────────────────────────────
+  # Thay vì alert khi SLO bị breach, alert khi budget đang bị đốt QUÁ NHANH.
+  #
+  # burn_rate = 14.4 nghĩa là:
+  #   28 ngày / 14.4 ≈ 1.9 ngày → sẽ hết budget trong < 2 ngày.
+  #
+  # Dual-window (1h + 5m) là pattern từ Google SRE Workbook:
+  #   - 1h window: xác nhận xu hướng bền vững (không phải spike 5 phút).
+  #   - 5m window: xác nhận vẫn đang xảy ra ngay lúc này.
+  #   - Cả hai phải cùng cao → giảm false positive đáng kể.
+  - name: slo_latency_burn_rate_fast
+    severity: P2
+    condition: >
+      burn_rate(latency_p95_ms, window=1h) > 14.4
+      AND burn_rate(latency_p95_ms, window=5m) > 14.4
+    type: burn-rate-based
+    owner: team-oncall
+    runbook: docs/alerts.md#1-high-latency-p95
+    note: Alert khi error budget sẽ cạn trong < 2 ngày (Google SRE pattern).
+
+  # ──────────────────────────────────────────────────────────
+  # P3: Low quality score
+  # ──────────────────────────────────────────────────────────
+  # Tại sao P3? User vẫn nhận được answer, chỉ là kém chất lượng.
+  # Không sập nhưng giá trị sản phẩm giảm → triage trong ngày.
+  #
+  # Threshold 0.6 (thấp hơn SLO 0.75) vì:
+  #   score 0.6 = mất cả doc retrieval bonus (+0.2) → RAG có vấn đề nghiêm trọng.
+  - name: low_quality_score
+    severity: P3
+    condition: quality_score_avg < 0.6 for 20m
+    type: symptom-based
+    owner: ml-team
+    runbook: docs/alerts.md#4-low-quality-score
+    correlates_with:
+      - trace_metadata: doc_count
+      - log_field: query_preview
+    slo_reference: quality_score_avg
