@@ -1,0 +1,10 @@
+#logging + PII
+
+# Khởi động app
+uvicorn app.main:app --reload
+
+# Gửi request thử (cửa sổ khác)
+python scripts/load_test.py
+
+# Validate log output
+python scripts/validate_logs.py
