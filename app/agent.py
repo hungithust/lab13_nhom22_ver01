@@ -41,7 +41,12 @@ class LabAgent:
             tags=["lab", feature, self.model],
         )
         langfuse_context.update_current_observation(
-            metadata={"doc_count": len(docs), "query_preview": summarize_text(message)},
+            metadata={
+                "doc_count": len(docs),
+                "query_preview": summarize_text(message),
+                "quality_score": quality_score,
+                "cost_usd": cost_usd,
+            },
             usage_details={"input": response.usage.input_tokens, "output": response.usage.output_tokens},
         )
 
