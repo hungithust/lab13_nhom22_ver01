@@ -1,0 +1,15 @@
+{
+  "source": "http://127.0.0.1:8000/metrics",
+  "metrics": {
+    "traffic": 12,
+    "latency_p50": 155.0,
+    "latency_p95": 171.0,
+    "latency_p99": 171.0,
+    "avg_cost_usd": 0.002,
+    "total_cost_usd": 0.0236,
+    "tokens_in_total": 410,
+    "tokens_out_total": 1490,
+    "error_breakdown": {},
+    "quality_avg": 0.875
+  }
+}

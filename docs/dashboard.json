@@ -1,0 +1,71 @@
+{
+  "title": "Day 13 Observability Dashboard",
+  "refresh_seconds": 15,
+  "time_range": "last_1_hour",
+  "panels": [
+    {
+      "title": "Latency P50/P95/P99",
+      "unit": "ms",
+      "visualization": "timeseries",
+      "values": {
+        "p50": 155.0,
+        "p95": 171.0,
+        "p99": 171.0
+      },
+      "thresholds": {
+        "slo_ms": 3000,
+        "alert_ms": 5000
+      }
+    },
+    {
+      "title": "Traffic",
+      "unit": "requests",
+      "visualization": "stat",
+      "values": {
+        "total_requests": 12
+      }
+    },
+    {
+      "title": "Error Rate",
+      "unit": "percent",
+      "visualization": "stat",
+      "values": {
+        "error_rate_pct": 0.0,
+        "breakdown": {}
+      },
+      "thresholds": {
+        "alert_pct": 5
+      }
+    },
+    {
+      "title": "Cost Over Time",
+      "unit": "usd",
+      "visualization": "stat",
+      "values": {
+        "avg_cost_usd": 0.002,
+        "total_cost_usd": 0.0236
+      }
+    },
+    {
+      "title": "Tokens In/Out",
+      "unit": "tokens",
+      "visualization": "bargauge",
+      "values": {
+        "tokens_in_total": 410,
+        "tokens_out_total": 1490
+      }
+    },
+    {
+      "title": "Quality Proxy",
+      "unit": "score",
+      "visualization": "stat",
+      "values": {
+        "quality_avg": 0.875
+      },
+      "thresholds": {
+        "slo_min": 0.75,
+        "alert_min": 0.6
+      }
+    }
+  ]
+}
